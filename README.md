@@ -1,6 +1,8 @@
 # Big Replicate
 Replicates data between Google Cloud BigQuery projects. Currently focused on copying Google Analytics Premium BigQuery exported data between different projects.
 
+[![CircleCI](https://circleci.com/gh/uswitch/big-replicate.svg?style=svg)](https://circleci.com/gh/uswitch/big-replicate)
+
 ## Usage
 
 The tool currently expects the destination project to have a dataset (with the same name as the source) that already exists. It will look for any session tables that are missing from the destination dataset, and replicate the `--number` of most recent ones.
