@@ -14,7 +14,7 @@ export DESTINATION_PROJECT="other-project"
 export STAGING_BUCKET="gs://some-bucket"
 export JVM_OPTS="-Dlogback.configurationFile=./logback.example.xml"
 
-java $JVM_OPTS -jar bigreplicate.jar \
+java $JVM_OPTS -jar big-replicate.jar \
   --source-project source-project-id \
   --destination-project destination-project-id \
   --google-cloud-bucket gs://staging-data-bucket \
@@ -29,7 +29,7 @@ Because only missing tables from the destination dataset are processed, tables w
 The tool is written in [Clojure](https://clojure.org) and requires [Leiningen](https://github.com/technomancy/leiningen).
 
 ```
-$ lein uberjar
+$ make
 ```
 
 ## To Do
