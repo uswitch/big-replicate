@@ -1,6 +1,6 @@
 general:
-	artifacts:
-		- "target/big-replicate-standalone.jar"
+  artifacts:
+    - "target/big-replicate-standalone.jar"
 test:
-	override:
-		- make
+  override:
+    - make
