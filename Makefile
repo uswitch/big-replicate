@@ -1,5 +1,4 @@
-SOURCES=$(wildcard *.clj)
+SOURCES=$(wildcard *.clj) $(wildcard src/uswitch/*.clj)
 
 ./target/big-replicate-standalone.jar: $(SOURCES)
-	echo $(SOURCES)
 	lein uberjar
