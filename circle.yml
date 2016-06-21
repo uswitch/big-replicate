@@ -1,7 +1,3 @@
-machine:
-  java:
-    version: jdk1.8.0
-
 general:
   artifacts:
     - "target/big-replicate-standalone.jar"
