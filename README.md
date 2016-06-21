@@ -8,12 +8,9 @@ Replicates data between Google Cloud BigQuery projects. Currently focused on cop
 The tool currently expects the destination project to have a dataset (with the same name as the source) that already exists. It will look for any session tables that are missing from the destination dataset, and replicate the `--number` of most recent ones.
 
 ```
-export GCLOUD_PROJECT="$SOURCE_PROJECT"
+export GCLOUD_PROJECT="source-project-id"
 export GOOGLE_APPLICATION_CREDENTIALS="./service-account-key.json"
 
-export SOURCE_PROJECT="some-project"
-export DESTINATION_PROJECT="other-project"
-export STAGING_BUCKET="gs://some-bucket"
 export JVM_OPTS="-Dlogback.configurationFile=./logback.example.xml"
 
 java $JVM_OPTS -jar big-replicate.jar \
@@ -24,7 +21,11 @@ java $JVM_OPTS -jar big-replicate.jar \
   --number 30
 ```
 
-Because only missing tables from the destination dataset are processed, tables will not be overwritten.
+Because only missing tables from the destination dataset are processed tables will not be overwritten. 
+
+In the example above it will look for all `ga_sessions_` tables that don't exist in the destination dataset (but do in the source). Of those, it sorts them lexicographically and in reverse order before processing `30`. This results in the last 30 days of missing days being loaded. 
+
+`big-replicate` will run multiple extract and loads concurrently- this is currently set to the number of available processors (as reported by the JVM runtime). You can override this with the `--number-of-agents` flag.
 
 ## Building
 
@@ -33,12 +34,6 @@ The tool is written in [Clojure](https://clojure.org) and requires [Leiningen](h
 ```
 $ make
 ```
-
-## To Do
-
-* The tool currently assumes its replicating only Google Analytics exported data. It would be nice to change this to allow a table regexp to be specified on the cli so its less specific to GA data.
-* The tool also assumes its replicating data between projects (with datasets of the same name). It might be useful to be able to copy data across projects as well as datasets.
-* Staging data is not automatically deleted once its been loaded into the destination table. 
 
 ## License
 
