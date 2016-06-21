@@ -1,4 +1,4 @@
-(defproject big-replicate "0.1.0-SNAPSHOT"
+(defproject big-replicate "0.1.0"
   :description "Copies data between BigQuery projects"
   :url "https://github.com/uswitch/big-replicate"
   :license {:name "Eclipse Public License"
