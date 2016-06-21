@@ -6,7 +6,7 @@
   :main uswitch.big-replicate
   :uberjar-name "big-replicate-standalone.jar"
   :dependencies [[org.clojure/clojure "1.8.0"]
-                 [gclouj/bigquery "0.2.4-SNAPSHOT" :exclusions [commons-logging]]
+                 [gclouj/bigquery "0.2.4" :exclusions [commons-logging]]
                  [org.clojure/tools.cli "0.3.1"]
                  [org.clojure/tools.logging "0.3.1"]
                  [org.clojure/core.async "0.2.385"]
