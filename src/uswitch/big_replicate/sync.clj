@@ -1,4 +1,4 @@
-(ns uswitch.big-replicate
+(ns uswitch.big-replicate.sync
   (:require [gclouj.bigquery :as bq]
             [clojure.string :as s]
             [clojure.tools.cli :refer (parse-opts)]
