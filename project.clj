@@ -3,7 +3,6 @@
   :url "https://github.com/uswitch/big-replicate"
   :license {:name "Eclipse Public License"
             :url "http://www.eclipse.org/legal/epl-v10.html"}
-  :main uswitch.big-replicate.sync
   :uberjar-name "big-replicate-standalone.jar"
   :dependencies [[org.clojure/clojure "1.8.0"]
                  [gclouj/bigquery "0.2.4" :exclusions [commons-logging]]

@@ -14,6 +14,7 @@ export GOOGLE_APPLICATION_CREDENTIALS="./service-account-key.json"
 export JVM_OPTS="-Dlogback.configurationFile=./logback.example.xml"
 
 java $JVM_OPTS -jar big-replicate.jar \
+  uswitch.big_replicate.sync \
   --source-project source-project-id \
   --destination-project destination-project-id \
   --google-cloud-bucket gs://staging-data-bucket \
