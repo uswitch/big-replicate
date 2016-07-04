@@ -1,4 +1,7 @@
 general:
+  branches:
+    only:
+      - master
   artifacts:
     - "target/big-replicate-standalone.jar"
 test:
