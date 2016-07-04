@@ -9,4 +9,4 @@ deployment:
     branch: master
     commands:
       - go get github.com/uswitch/ghr
-      - ghr -t $GITHUB_TOKEN -u $CIRCLE_PROJECT_USERNAME -r $CIRCLE_PROJECT_REPONAME --replace `git describe --tags` target/big-replicate-standalone.jar
+      - ghr -t $GITHUB_TOKEN -u $CIRCLE_PROJECT_USERNAME -r $CIRCLE_PROJECT_REPONAME --replace $CIRCLE_BUILD_NUM target/big-replicate-standalone.jar
