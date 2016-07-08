@@ -3,6 +3,7 @@
             [clojure.string :as s]
             [clojure.tools.cli :refer (parse-opts)]
             [clojure.set :as se]
+            [clojure.string :as st]
             [clojure.tools.logging :refer (info error debug)]
             [clojure.core.async :as a])
   (:import [com.google.api.client.googleapis.json GoogleJsonResponseException])
@@ -50,7 +51,7 @@
          (not (.endsWith staging-bucket "/"))]}
   (let [uri (staging-location staging-bucket source-table)]
     (info "starting extract for" source-table "into" uri)
-    (let [job (bq/extract-job (bq/service) source-table uri)]
+    (let [job (bq/extract-job (bq/service {:project-id (:project-id source-table)}) source-table uri)]
       (assoc current-state
         :state       :wait-for-extract
         :extract-uri uri
@@ -64,12 +65,13 @@
        (not (empty? (get-in job [:status :errors])))))
 
 (defn poll-job [job]
-  (let [{:keys [job-id]} job
-        job-state        (bq/job (bq/service) job-id)]
-    (cond (pending? job-state)       [:pending job-state]
-          (bq/running? job-state)    [:running job-state]
-          (failed? job-state)        [:failed job-state]
-          (bq/successful? job-state) [:successful job-state])))
+  (let [{:keys [job-id]} job]
+    (let [job-state        (bq/job (bq/service {:project-id (:project-id job-id)})
+                                   job-id)]
+      (cond (pending? job-state)       [:pending job-state]
+            (bq/running? job-state)    [:running job-state]
+            (failed? job-state)        [:failed job-state]
+            (bq/successful? job-state) [:successful job-state]))))
 
 (defn wait-for-job [next-state {:keys [job] :as current-state}]
   (let [[status job] (poll-job job)]
@@ -86,16 +88,17 @@
 (def wait-for-load    (partial wait-for-job :completed))
 
 (defn load-table [{:keys [destination-table source-table extract-uri] :as current-state}]
-  (let [service               (bq/service)
-        table                 (bq/table service source-table)
+  (let [table                 (bq/table (bq/service {:project-id (:project-id source-table)}) source-table)
         schema                (get-in table [:definition :schema])]
-    (let [job (bq/load-job (bq/service) destination-table {:create-disposition :needed
-                                                           :write-disposition  :empty
-                                                           :schema             schema} [extract-uri])]
+    (let [job (bq/load-job (bq/service {:project-id (:project-id destination-table)})
+                           destination-table
+                           {:create-disposition :needed
+                            :write-disposition  :empty
+                            :schema             schema} [extract-uri])]
       (info "starting load into" destination-table)
       (assoc current-state
-        :state :wait-for-load
-        :job   job))))
+             :state :wait-for-load
+             :job   job))))
 
 
 (defn failed [current-state]
@@ -178,6 +181,7 @@
           in-ch          (a/chan)
           completed-ch   (a/chan)]
       (a/thread
+        (info "syncing" (count sorted-targets) "tables:\n" (st/join "\n" (map pr-str sorted-targets)))
         (doseq [t sorted-targets]
           (let [{:keys [google-cloud-bucket]} options
                 state {:source-table      t
