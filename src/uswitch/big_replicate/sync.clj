@@ -1,17 +1,20 @@
 (ns uswitch.big-replicate.sync
   (:require [gclouj.bigquery :as bq]
+            [gclouj.storage :as cs]
             [clojure.string :as s]
             [clojure.tools.cli :refer (parse-opts)]
             [clojure.set :as se]
+            [clojure.string :as st]
             [clojure.tools.logging :refer (info error debug)]
             [clojure.core.async :as a])
   (:import [com.google.api.client.googleapis.json GoogleJsonResponseException])
   (:gen-class))
 
 (def cli [["-s" "--source-project PROJECT_ID"      "Source Google Cloud Project"]
-          ["-d" "--destination-project PROJECT_ID" "Destination Google Cloud Project"]
+          ["-i" "--source-dataset DATASET_ID"      "Source BigQuery dataset"]
+          ["-p" "--destination-project PROJECT_ID" "Destination Google Cloud Project"]
+          ["-d" "--destination-dataset DATASET_ID" "Destination BigQuery dataset"]
           ["-g" "--google-cloud-bucket BUCKET"     "Staging bucket to store exported data"]
-          ["-i" "--datasets DATASETS"              "Comma-separated list of Dataset IDs to export"]
           ["-n" "--number NUMBER"                  "Number of days to look back for missing tables"
            :default 7 :parse-fn #(Integer/parseInt %)]
           ["-a" "--number-of-agents NUMBER"        "Number of concurrent replication agents to run."
@@ -22,29 +25,24 @@
 
 (defn sources
   "Finds all tables in dataset to replicate"
-  [project-id datasets]
+  [project-id dataset]
   (let [service (bq/service {:project-id project-id})]
-    (->> (bq/datasets service)
-         (map :dataset-id)
-         (filter (fn [dataset]
-                   (let [id (get-in dataset [:dataset-id])]
-                     (some (set datasets) [id]))))
-         (mapcat (fn [dataset]
-                   (bq/tables service dataset)))
+    (->> (bq/tables service {:project-id project-id
+                             :dataset-id dataset})
          (map :table-id))))
 
 (defn sessions-sources
   "Finds Google Analytics session source tables"
-  [project-id datasets]
-  (->> (sources project-id datasets)
+  [project-id dataset]
+  (->> (sources project-id dataset)
        (filter (fn [table]
                  (re-matches #"ga_sessions_\d+" (:table-id table))))
        (map (fn [{:keys [project-id dataset-id table-id]}] (TableReference. project-id dataset-id table-id)))))
 
 (defn staging-location [bucket {:keys [dataset-id table-id] :as table-reference}]
-  (format "%s/%s/%s/*" bucket dataset-id table-id))
-
-
+  (let [prefix (format "%s/%s" dataset-id table-id)]
+    {:uri    (format "%s/%s/*" bucket prefix)
+     :prefix prefix}))
 
 
 
@@ -52,13 +50,14 @@
 (defn extract-table [{:keys [source-table staging-bucket] :as current-state}]
   {:pre [(.startsWith staging-bucket "gs://")
          (not (.endsWith staging-bucket "/"))]}
-  (let [uri (staging-location staging-bucket source-table)]
+  (let [{:keys [uri prefix]} (staging-location staging-bucket source-table)]
     (info "starting extract for" source-table "into" uri)
-    (let [job (bq/extract-job (bq/service) source-table uri)]
+    (let [job (bq/extract-job (bq/service {:project-id (:project-id source-table)}) source-table uri)]
       (assoc current-state
-        :state       :wait-for-extract
-        :extract-uri uri
-        :job         job))))
+        :state          :wait-for-extract
+        :extract-uri    uri
+        :staging-prefix prefix
+        :job            job))))
 
 (defn pending? [job]
   (= :pending (get-in job [:status :state])))
@@ -68,12 +67,13 @@
        (not (empty? (get-in job [:status :errors])))))
 
 (defn poll-job [job]
-  (let [{:keys [job-id]} job
-        job-state        (bq/job (bq/service) job-id)]
-    (cond (pending? job-state)       [:pending job-state]
-          (bq/running? job-state)    [:running job-state]
-          (failed? job-state)        [:failed job-state]
-          (bq/successful? job-state) [:successful job-state])))
+  (let [{:keys [job-id]} job]
+    (let [job-state        (bq/job (bq/service {:project-id (:project-id job-id)})
+                                   job-id)]
+      (cond (pending? job-state)       [:pending job-state]
+            (bq/running? job-state)    [:running job-state]
+            (failed? job-state)        [:failed job-state]
+            (bq/successful? job-state) [:successful job-state]))))
 
 (defn wait-for-job [next-state {:keys [job] :as current-state}]
   (let [[status job] (poll-job job)]
@@ -87,19 +87,37 @@
                                      (assoc current-state :job job)))))
 
 (def wait-for-extract (partial wait-for-job :load))
-(def wait-for-load    (partial wait-for-job :completed))
+(def wait-for-load    (partial wait-for-job :cleanup))
 
-(defn load-table [{:keys [destination-table source-table extract-uri dataset-location] :as current-state}]
-  (let [service               (bq/service)
-        table                 (bq/table service source-table)
+(defn load-table [{:keys [destination-table source-table extract-uri] :as current-state}]
+  (let [table                 (bq/table (bq/service {:project-id (:project-id source-table)}) source-table)
         schema                (get-in table [:definition :schema])]
-    (let [job (bq/load-job (bq/service) destination-table {:create-disposition :needed
-                                                           :write-disposition  :empty
-                                                           :schema             schema} [extract-uri])]
+    (let [job (bq/load-job (bq/service {:project-id (:project-id destination-table)})
+                           destination-table
+                           {:create-disposition :needed
+                            :write-disposition  :empty
+                            :schema             schema} [extract-uri])]
       (info "starting load into" destination-table)
       (assoc current-state
-        :state :wait-for-load
-        :job   job))))
+             :state :wait-for-load
+             :job   job))))
+
+(defn cleanup [{:keys [extract-uri staging-bucket staging-prefix] :as current-state}]
+  (let [bucket  (st/replace staging-bucket "gs://" "")
+        storage (cs/service)]
+    (info "deleting staging location" extract-uri)
+    (debug "finding objects in" bucket "with prefix" staging-prefix)
+    (loop [objects (cs/blobs storage bucket staging-prefix)]
+      (if-let [blobs (seq objects)]
+        (let [blob (first blobs)]
+          (debug "deleting" blob)
+          (let [deleted? (cs/delete-blob storage (:id blob))]
+            (if deleted?
+              (recur (rest objects))
+              (assoc current-state
+                     :state :failed
+                     :cause (format "couldn't delete %s" (pr-str (:id blob)))))))
+        (assoc current-state :state :completed)))))
 
 
 (defn failed [current-state]
@@ -116,6 +134,7 @@
                        :failed           failed
                        :load             load-table
                        :wait-for-load    wait-for-load
+                       :cleanup          cleanup
                        :completed        completed} state)
           next-state (try (op current-state)
                           (catch Exception ex
@@ -133,6 +152,25 @@
         (a/>!! completed-ch (select-keys state [:source-table :destination-table]))
         (recur (a/<!! in-ch))))))
 
+
+(defn missing-tables [sources destinations]
+  (let [s (map :table-id sources)
+        d (map :table-id destinations)
+        t (se/difference (set s) (set d))]
+    (->> sources
+         (filter (fn [{:keys [table-id]}]
+                   (some (set [table-id]) t))))))
+
+(defn- override [m k overrides]
+  (let [override (k overrides)]
+    (update-in m [k] (fn [val] (or override val)))))
+
+(defn destination-table
+  [table overrides]
+  (-> table
+      (override :project-id overrides)
+      (override :dataset-id overrides)))
+
 (defn -main [& args]
   (let [{:keys [options summary errors]} (parse-opts args cli)]
     (when errors
@@ -141,23 +179,25 @@
     (when (:help options)
       (println summary)
       (System/exit 0))
-    (let [datasets       (-> (:datasets options) (s/split #","))
-          sources        (sessions-sources (:source-project options) datasets)
-          destinations   (->> (sessions-sources (:destination-project options) datasets)
-                              (map (fn [table]
-                                     (assoc table :project-id (:source-project options)))))
-          target         (se/difference (set sources) (set destinations))
+    (let [{:keys [source-project source-dataset
+                  destination-project destination-dataset]} options
+          overrides      {:project-id destination-project
+                          :dataset-id destination-dataset}
+          sources        (sessions-sources source-project source-dataset)
+          destinations   (->> (sessions-sources destination-project (or destination-dataset
+                                                                        source-dataset)))
+          target         (missing-tables sources destinations)
           sorted-targets (->> target (sort-by :table-id) (reverse) (take (:number options)))
           in-ch          (a/chan)
           completed-ch   (a/chan)]
       (a/thread
+        (info "syncing" (count sorted-targets) "tables:\n" (st/join "\n" (map pr-str sorted-targets)))
         (doseq [t sorted-targets]
-          (let [{:keys [google-cloud-bucket destination-project dataset-location]} options
+          (let [{:keys [google-cloud-bucket]} options
                 state {:source-table      t
-                       :destination-table (assoc t :project-id destination-project)
+                       :destination-table (destination-table t overrides)
                        :staging-bucket    google-cloud-bucket
-                       :state             :extract
-                       :dataset-location  dataset-location}]
+                       :state             :extract}]
             (a/>!! in-ch state))))
       (let [agents (:number-of-agents options)]
         (info "creating" agents "replicator agents")

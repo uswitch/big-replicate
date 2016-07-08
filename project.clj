@@ -5,7 +5,8 @@
             :url "http://www.eclipse.org/legal/epl-v10.html"}
   :uberjar-name "big-replicate-standalone.jar"
   :dependencies [[org.clojure/clojure "1.8.0"]
-                 [gclouj/bigquery "0.2.4" :exclusions [commons-logging]]
+                 [gclouj/bigquery "0.2.5" :exclusions [commons-logging]]
+                 [gclouj/storage "0.2.5"]
                  [org.clojure/tools.cli "0.3.1"]
                  [org.clojure/tools.logging "0.3.1"]
                  [org.clojure/core.async "0.2.385"]
