@@ -1,5 +1,6 @@
 (ns uswitch.big-replicate.sync
   (:require [gclouj.bigquery :as bq]
+            [gclouj.storage :as cs]
             [clojure.string :as s]
             [clojure.tools.cli :refer (parse-opts)]
             [clojure.set :as se]
@@ -39,9 +40,9 @@
        (map (fn [{:keys [project-id dataset-id table-id]}] (TableReference. project-id dataset-id table-id)))))
 
 (defn staging-location [bucket {:keys [dataset-id table-id] :as table-reference}]
-  (format "%s/%s/%s/*" bucket dataset-id table-id))
-
-
+  (let [prefix (format "%s/%s" dataset-id table-id)]
+    {:uri    (format "%s/%s/*" bucket prefix)
+     :prefix prefix}))
 
 
 
@@ -49,13 +50,14 @@
 (defn extract-table [{:keys [source-table staging-bucket] :as current-state}]
   {:pre [(.startsWith staging-bucket "gs://")
          (not (.endsWith staging-bucket "/"))]}
-  (let [uri (staging-location staging-bucket source-table)]
+  (let [{:keys [uri prefix]} (staging-location staging-bucket source-table)]
     (info "starting extract for" source-table "into" uri)
     (let [job (bq/extract-job (bq/service {:project-id (:project-id source-table)}) source-table uri)]
       (assoc current-state
-        :state       :wait-for-extract
-        :extract-uri uri
-        :job         job))))
+        :state          :wait-for-extract
+        :extract-uri    uri
+        :staging-prefix prefix
+        :job            job))))
 
 (defn pending? [job]
   (= :pending (get-in job [:status :state])))
@@ -85,7 +87,7 @@
                                      (assoc current-state :job job)))))
 
 (def wait-for-extract (partial wait-for-job :load))
-(def wait-for-load    (partial wait-for-job :completed))
+(def wait-for-load    (partial wait-for-job :cleanup))
 
 (defn load-table [{:keys [destination-table source-table extract-uri] :as current-state}]
   (let [table                 (bq/table (bq/service {:project-id (:project-id source-table)}) source-table)
@@ -99,6 +101,23 @@
       (assoc current-state
              :state :wait-for-load
              :job   job))))
+
+(defn cleanup [{:keys [extract-uri staging-bucket staging-prefix] :as current-state}]
+  (let [bucket  (st/replace staging-bucket "gs://" "")
+        storage (cs/service)]
+    (info "deleting staging location" extract-uri)
+    (debug "finding objects in" bucket "with prefix" staging-prefix)
+    (loop [objects (cs/blobs storage bucket staging-prefix)]
+      (if-let [blobs (seq objects)]
+        (let [blob (first blobs)]
+          (debug "deleting" blob)
+          (let [deleted? (cs/delete-blob storage (:id blob))]
+            (if deleted?
+              (recur (rest objects))
+              (assoc current-state
+                     :state :failed
+                     :cause (format "couldn't delete %s" (pr-str (:id blob)))))))
+        (assoc current-state :state :completed)))))
 
 
 (defn failed [current-state]
@@ -115,6 +134,7 @@
                        :failed           failed
                        :load             load-table
                        :wait-for-load    wait-for-load
+                       :cleanup          cleanup
                        :completed        completed} state)
           next-state (try (op current-state)
                           (catch Exception ex
@@ -132,16 +152,6 @@
         (a/>!! completed-ch (select-keys state [:source-table :destination-table]))
         (recur (a/<!! in-ch))))))
 
-
-;; sources:
-;;   project, dataset, table
-;;
-;; destinations:
-;;   table is input, project and dataset (although maybe overridden from cli)
-;;
-;; need to find tables to sync, but may have different project/dataset
-;; so probably need to diff on just table
-;; but then build destination based on source + cli
 
 (defn missing-tables [sources destinations]
   (let [s (map :table-id sources)
