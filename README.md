@@ -24,9 +24,10 @@ export JVM_OPTS="-Dlogback.configurationFile=./logback.example.xml"
 java $JVM_OPTS -cp big-replicate-standalone.jar \
   uswitch.big_replicate.sync \
   --source-project source-project-id \
+  --source-dataset 98909919 \
   --destination-project destination-project-id \
+  --destination-dataset 98909919 \
   --google-cloud-bucket gs://staging-data-bucket \
-  --datasets 98909919 \
   --number 30
 ```
 
