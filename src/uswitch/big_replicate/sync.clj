@@ -118,37 +118,25 @@
                      :cause (format "couldn't delete %s" (pr-str (:id blob)))))))
         (assoc current-state :state :completed)))))
 
-
-(defn failed [current-state]
-  (error "failed" current-state))
-
-(defn completed [{:keys [destination-table]}]
-  (info "successfully replicated" destination-table))
-
 (defn progress [current-state]
   (loop [current-state current-state]
-    (let [state      (:state current-state)
-          op         ({:extract          extract-table
-                       :wait-for-extract wait-for-extract
-                       :failed           failed
-                       :load             load-table
-                       :wait-for-load    wait-for-load
-                       :cleanup          cleanup
-                       :completed        completed} state)
-          next-state (try (op current-state)
-                          (catch Exception ex
-                            (assoc current-state
-                              :state     :failed
-                              :exception ex)))]
-      (when next-state
-        (recur next-state)))))
+    (let [state (:state current-state)]
+      (if-let [op ({:extract          extract-table
+                    :wait-for-extract wait-for-extract
+                    :load             load-table
+                    :wait-for-load    wait-for-load
+                    :cleanup          cleanup} state)]
+        (recur (try (op current-state)
+                    (catch Exception ex
+                      (assoc current-state :state :failed :exception ex))))
+        current-state))))
 
 (defn replicator-agent [in-ch completed-ch]
   (a/thread
     (loop [state (a/<!! in-ch)]
       (when state
-        (progress state)
-        (a/>!! completed-ch (select-keys state [:source-table :destination-table]))
+        (let [final-state (progress state)]
+          (a/>!! completed-ch final-state))
         (recur (a/<!! in-ch))))))
 
 
@@ -213,7 +201,10 @@
              m (a/<!! completed-ch)]
         (let [expected-count (count targets)]
           (when m
-            (info (format "%d/%d" n expected-count) "completed," m)
+            (info (format "%d/%d" n expected-count) "completed")
+            (if (= :failed (:state m))
+              (error "sync failed. final state:" m)
+              (info "sync successful:" (select-keys m [:source-table :destination-table])))
             (if (= n expected-count)
               (info "finished")
               (recur (inc n) (a/<!! completed-ch)))))))))
