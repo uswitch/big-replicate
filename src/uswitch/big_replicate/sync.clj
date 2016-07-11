@@ -109,7 +109,7 @@
     (loop [objects (cs/blobs storage bucket staging-prefix)]
       (if-let [blobs (seq objects)]
         (let [blob (first blobs)]
-          (debug "deleting" blob)
+          (debug "deleting" (:id blob))
           (let [deleted? (cs/delete-blob storage (:id blob))]
             (if deleted?
               (recur (rest objects))
