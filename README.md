@@ -27,15 +27,21 @@ java $JVM_OPTS -cp big-replicate-standalone.jar \
   --source-dataset 98909919 \
   --destination-project destination-project-id \
   --destination-dataset 98909919 \
+  --table-filter "ga_sessions_\d+" \
   --google-cloud-bucket gs://staging-data-bucket \
   --number 30
 ```
 
 Because only missing tables from the destination dataset are processed tables will not be overwritten. 
 
-In the example above it will look for all `ga_sessions_` tables that don't exist in the destination dataset (but do in the source). Of those, it sorts them lexicographically and in reverse order before processing `30`. This results in the last 30 days of missing days being loaded. 
+The example above is intended for replicating [Google Analytics BigQuery data](https://support.google.com/analytics/answer/3437618?hl=en) from one project to another. It works by:
 
-`big-replicate` will run multiple extract and loads concurrently- this is currently set to the number of available processors (as reported by the JVM runtime). You can override this with the `--number-of-agents` flag.
+* Specifying `--table-filter` to only replicate tables matching the expected `ga_sessions_\d+` filter. This can be any valid Java regular expression. 
+* Specifying `--number` restricts the replication to 30 tables. Tables are reverse ordered lexicographically by the tool.
+
+This ensures that the most recent 30 days of tables that don't exist (in the `--destination-project` and `--destination-dataset`) but do in the sources will be replicated.
+
+`big-replicate` will run multiple extract and loads concurrently- this is currently set to the number of available processors (as reported by the JVM runtime). You can override this with the `--number-of-agents` flag. Since no processing is performed client-side (all operations are BigQuery jobs) its safe to set this well above the processor count.
 
 ### Materializing Data
 

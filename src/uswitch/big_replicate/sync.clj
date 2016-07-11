@@ -14,6 +14,8 @@
           ["-i" "--source-dataset DATASET_ID"      "Source BigQuery dataset"]
           ["-p" "--destination-project PROJECT_ID" "Destination Google Cloud Project"]
           ["-d" "--destination-dataset DATASET_ID" "Destination BigQuery dataset"]
+          ["-f" "--table-filter REGEXP"            "Only tables matching this regexp will be processed"
+           :default ".*" :parse-fn re-pattern]
           ["-g" "--google-cloud-bucket BUCKET"     "Staging bucket to store exported data"]
           ["-n" "--number NUMBER"                  "Number of days to look back for missing tables"
            :default 7 :parse-fn #(Integer/parseInt %)]
@@ -23,21 +25,18 @@
 
 (defrecord TableReference [project-id dataset-id table-id])
 
-(defn sources
+(defn table-ref [{:keys [project-id dataset-id table-id]}]
+  (TableReference. project-id dataset-id table-id))
+
+(defn tables
   "Finds all tables in dataset to replicate"
-  [project-id dataset]
+  [project-id dataset pattern]
   (let [service (bq/service {:project-id project-id})]
     (->> (bq/tables service {:project-id project-id
                              :dataset-id dataset})
-         (map :table-id))))
-
-(defn sessions-sources
-  "Finds Google Analytics session source tables"
-  [project-id dataset]
-  (->> (sources project-id dataset)
-       (filter (fn [table]
-                 (re-matches #"ga_sessions_\d+" (:table-id table))))
-       (map (fn [{:keys [project-id dataset-id table-id]}] (TableReference. project-id dataset-id table-id)))))
+         (map :table-id)
+         (filter (fn [table] (re-matches pattern (:table-id table))))
+         (map table-ref))))
 
 (defn staging-location [bucket {:keys [dataset-id table-id] :as table-reference}]
   (let [prefix (format "%s/%s" dataset-id table-id)]
@@ -180,12 +179,14 @@
       (println summary)
       (System/exit 0))
     (let [{:keys [source-project source-dataset
-                  destination-project destination-dataset]} options
+                  destination-project destination-dataset table-filter]} options
                   overrides    {:project-id destination-project
                                 :dataset-id destination-dataset}
-                  sources      (sessions-sources source-project source-dataset)
-                  destinations (sessions-sources destination-project (or destination-dataset
-                                                                         source-dataset))
+                  sources      (tables source-project source-dataset table-filter)
+                  destinations (tables destination-project
+                                       (or destination-dataset
+                                           source-dataset)
+                                       table-filter)
                   targets      (->> (missing-tables sources destinations)
                                     (sort-by :table-id)
                                     (reverse)
