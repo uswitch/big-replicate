@@ -158,6 +158,17 @@
       (override :project-id overrides)
       (override :dataset-id overrides)))
 
+(defn target-tables [{:keys [source-project source-dataset destination-project destination-dataset table-filter] :as options}]
+  (let [sources      (tables source-project source-dataset table-filter)
+        destinations (tables destination-project
+                             (or destination-dataset
+                                 source-dataset)
+                             table-filter)]
+    (->> (missing-tables sources destinations)
+         (sort-by :table-id)
+         (reverse)
+         (take (:number options)))))
+
 (defn -main [& args]
   (let [{:keys [options summary errors]} (parse-opts args cli)]
     (when errors
@@ -166,45 +177,34 @@
     (when (:help options)
       (println summary)
       (System/exit 0))
-    (let [{:keys [source-project source-dataset
-                  destination-project destination-dataset table-filter]} options
-                  overrides    {:project-id destination-project
-                                :dataset-id destination-dataset}
-                  sources      (tables source-project source-dataset table-filter)
-                  destinations (tables destination-project
-                                       (or destination-dataset
-                                           source-dataset)
-                                       table-filter)
-                  targets      (->> (missing-tables sources destinations)
-                                    (sort-by :table-id)
-                                    (reverse)
-                                    (take (:number options)))
-                  in-ch        (a/chan)
-                  completed-ch (a/chan)]
+    (let [targets (target-tables options)]
       (when (empty? targets)
         (info "no tables to copy")
         (System/exit 0))
-      (a/thread
-        (info "syncing" (count targets) "tables:\n" (st/join "\n" (map pr-str targets)))
-        (doseq [t targets]
-          (let [{:keys [google-cloud-bucket]} options
-                state {:source-table      t
-                       :destination-table (destination-table t overrides)
-                       :staging-bucket    google-cloud-bucket
-                       :state             :extract}]
-            (a/>!! in-ch state))))
-      (let [agents (:number-of-agents options)]
-        (info "creating" agents "replicator agents")
-        (dotimes [_ agents]
-          (replicator-agent in-ch completed-ch)))
-      (loop [n 1
-             m (a/<!! completed-ch)]
+      (let [in-ch        (a/chan)
+            completed-ch (a/chan)]
+        (a/thread
+          (info "syncing" (count targets) "tables:\n" (st/join "\n" (map pr-str targets)))
+          (let [{:keys [google-cloud-bucket destination-project destination-dataset]} options
+                overrides {:project-id destination-project
+                           :dataset-id destination-dataset}]
+            (doseq [source-table targets]
+              (a/>!! in-ch {:source-table      source-table
+                            :destination-table (destination-table source-table overrides)
+                            :staging-bucket    google-cloud-bucket
+                            :state             :extract}))))
+        (let [agents (:number-of-agents options)]
+          (info "creating" agents "replicator agents")
+          (dotimes [_ agents]
+            (replicator-agent in-ch completed-ch)))
         (let [expected-count (count targets)]
-          (when m
-            (info (format "%d/%d" n expected-count) "completed")
-            (if (= :failed (:state m))
-              (error "sync failed. final state:" m)
-              (info "sync successful:" (select-keys m [:source-table :destination-table])))
-            (if (= n expected-count)
-              (info "finished")
-              (recur (inc n) (a/<!! completed-ch)))))))))
+          (loop [n 1
+                 m (a/<!! completed-ch)]
+            (when m
+              (info (format "%d/%d" n expected-count) "completed")
+              (if (= :failed (:state m))
+                (error "sync failed. final state:" m)
+                (info "sync successful:" (select-keys m [:source-table :destination-table])))
+              (if (= n expected-count)
+                (info "finished")
+                (recur (inc n) (a/<!! completed-ch))))))))))
