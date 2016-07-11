@@ -181,18 +181,23 @@
       (System/exit 0))
     (let [{:keys [source-project source-dataset
                   destination-project destination-dataset]} options
-          overrides      {:project-id destination-project
-                          :dataset-id destination-dataset}
-          sources        (sessions-sources source-project source-dataset)
-          destinations   (->> (sessions-sources destination-project (or destination-dataset
-                                                                        source-dataset)))
-          target         (missing-tables sources destinations)
-          sorted-targets (->> target (sort-by :table-id) (reverse) (take (:number options)))
-          in-ch          (a/chan)
-          completed-ch   (a/chan)]
+                  overrides    {:project-id destination-project
+                                :dataset-id destination-dataset}
+                  sources      (sessions-sources source-project source-dataset)
+                  destinations (->> (sessions-sources destination-project (or destination-dataset
+                                                                              source-dataset)))
+                  targets      (->> (missing-tables sources destinations)
+                                    (sort-by :table-id)
+                                    (reverse)
+                                    (take (:number options)))
+                  in-ch        (a/chan)
+                  completed-ch (a/chan)]
+      (when (empty? targets)
+        (info "no tables to copy")
+        (System/exit 0))
       (a/thread
-        (info "syncing" (count sorted-targets) "tables:\n" (st/join "\n" (map pr-str sorted-targets)))
-        (doseq [t sorted-targets]
+        (info "syncing" (count targets) "tables:\n" (st/join "\n" (map pr-str targets)))
+        (doseq [t targets]
           (let [{:keys [google-cloud-bucket]} options
                 state {:source-table      t
                        :destination-table (destination-table t overrides)
@@ -205,7 +210,7 @@
           (replicator-agent in-ch completed-ch)))
       (loop [n 1
              m (a/<!! completed-ch)]
-        (let [expected-count (count sorted-targets)]
+        (let [expected-count (count targets)]
           (when m
             (info (format "%d/%d" n expected-count) "completed," m)
             (if (= n expected-count)
