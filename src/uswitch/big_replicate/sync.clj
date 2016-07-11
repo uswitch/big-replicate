@@ -184,8 +184,8 @@
                   overrides    {:project-id destination-project
                                 :dataset-id destination-dataset}
                   sources      (sessions-sources source-project source-dataset)
-                  destinations (->> (sessions-sources destination-project (or destination-dataset
-                                                                              source-dataset)))
+                  destinations (sessions-sources destination-project (or destination-dataset
+                                                                         source-dataset))
                   targets      (->> (missing-tables sources destinations)
                                     (sort-by :table-id)
                                     (reverse)
