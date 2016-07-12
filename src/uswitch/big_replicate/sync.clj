@@ -158,7 +158,7 @@
       (override :project-id overrides)
       (override :dataset-id overrides)))
 
-(defn target-tables [{:keys [source-project source-dataset destination-project destination-dataset table-filter] :as options}]
+(defn target-tables [{:keys [source-project source-dataset destination-project destination-dataset table-filter number] :as options}]
   (let [sources      (tables source-project source-dataset table-filter)
         destinations (tables destination-project
                              (or destination-dataset
@@ -167,7 +167,7 @@
     (->> (missing-tables sources destinations)
          (sort-by :table-id)
          (reverse)
-         (take (:number options)))))
+         (take number))))
 
 (defn -main [& args]
   (let [{:keys [options summary errors]} (parse-opts args cli)]
@@ -181,18 +181,19 @@
       (when (empty? targets)
         (info "no tables to copy")
         (System/exit 0))
-      (let [in-ch        (a/chan)
+      (let [in-ch        (a/chan (:number options))
             completed-ch (a/chan)]
-        (a/thread
-          (info "syncing" (count targets) "tables:\n" (st/join "\n" (map pr-str targets)))
-          (let [{:keys [google-cloud-bucket destination-project destination-dataset]} options
-                overrides {:project-id destination-project
-                           :dataset-id destination-dataset}]
-            (doseq [source-table targets]
-              (a/>!! in-ch {:source-table      source-table
-                            :destination-table (destination-table source-table overrides)
-                            :staging-bucket    google-cloud-bucket
-                            :state             :extract}))))
+        (info "syncing" (count targets) "tables:\n" (st/join "\n" (map pr-str targets)))
+        (let [{:keys [google-cloud-bucket destination-project destination-dataset]} options
+              overrides {:project-id destination-project
+                         :dataset-id destination-dataset}]
+          (->> targets
+               (map (fn [source-table]
+                      {:source-table      source-table
+                       :destination-table (destination-table source-table overrides)
+                       :staging-bucket    google-cloud-bucket
+                       :state             :extract}))
+               (a/onto-chan in-ch)))
         (let [agents (:number-of-agents options)]
           (info "creating" agents "replicator agents")
           (dotimes [_ agents]
