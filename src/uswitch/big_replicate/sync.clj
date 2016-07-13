@@ -15,7 +15,7 @@
           ["-p" "--destination-project PROJECT_ID" "Destination Google Cloud Project"]
           ["-d" "--destination-dataset DATASET_ID" "Destination BigQuery dataset"]
           ["-f" "--table-filter REGEXP"            "Only tables matching this regexp will be processed"
-           :default ".*" :parse-fn re-pattern]
+           :default (re-pattern ".*") :parse-fn re-pattern]
           ["-g" "--google-cloud-bucket BUCKET"     "Staging bucket to store exported data"]
           ["-n" "--number NUMBER"                  "Number of days to look back for missing tables"
            :default 7 :parse-fn #(Integer/parseInt %)]
